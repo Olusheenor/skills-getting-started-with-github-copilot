@@ -25,14 +25,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // Build participants HTML (bulleted list) or show a friendly message
         const participantsHtml = details.participants && details.participants.length
-          ? `<ul class="participants-list">${details.participants.map(p => `<li class="participant-item">${p}</li>`).join("")}</ul>`
+          ? `<ul class="participants-list">${details.participants.map(p => `<li class="participant-item"><span class="participant-email">${p}</span><button class="delete-btn" data-activity="${name}" data-email="${p}">✖</button></li>`).join("")}</ul>`
           : `<p class="no-participants">No participants yet</p>`;
 
         activityCard.innerHTML = `
           <h4>${name}</h4>
           <p>${details.description}</p>
           <p><strong>Schedule:</strong> ${details.schedule}</p>
-          <p><strong>Availability:</strong> ${spotsLeft} spots left</p>
+          <p class="availability" data-activity="${name}"><strong>Availability:</strong> ${spotsLeft} spots left</p>
           <div class="participants-section">
             <h5>Participants</h5>
             ${participantsHtml}
@@ -40,6 +40,76 @@ document.addEventListener("DOMContentLoaded", () => {
         `;
 
         activitiesList.appendChild(activityCard);
+
+        // Add delete button handlers for participants (confirmation + optimistic UI)
+        const deleteButtons = activityCard.querySelectorAll(".delete-btn");
+        deleteButtons.forEach((btn) => {
+          btn.addEventListener("click", async (e) => {
+            const activityName = btn.dataset.activity;
+            const email = btn.dataset.email;
+
+            // Confirm deletion
+            const confirmed = window.confirm(`Remove ${email} from ${activityName}?`);
+            if (!confirmed) return;
+
+            // Find the participant list item and availability element
+            const li = btn.closest(".participant-item");
+            const participantsList = li && li.parentElement;
+            const availabilityP = activityCard.querySelector('.availability');
+
+            // Backup for rollback
+            const liBackup = li ? li.cloneNode(true) : null;
+            const oldSpotsText = availabilityP ? availabilityP.textContent : null;
+
+            // Optimistically remove from DOM and update spots
+            if (li && participantsList) {
+              li.remove();
+            }
+            if (availabilityP) {
+              // parse current spots number and decrement
+              const match = availabilityP.textContent.match(/(\d+) spots left/);
+              if (match) {
+                const current = parseInt(match[1], 10);
+                availabilityP.innerHTML = `<strong>Availability:</strong> ${Math.max(0, current + 1)} spots left`;
+              }
+            }
+
+            // Send delete request
+            try {
+              const resp = await fetch(
+                `/activities/${encodeURIComponent(activityName)}/participants?email=${encodeURIComponent(email)}`,
+                { method: "DELETE" }
+              );
+
+              const result = await resp.json().catch(() => ({}));
+
+              if (resp.ok) {
+                messageDiv.textContent = result.message || "Participant removed";
+                messageDiv.className = "success";
+                messageDiv.classList.remove("hidden");
+              } else {
+                // Rollback UI
+                if (liBackup && participantsList) participantsList.appendChild(liBackup);
+                if (availabilityP && oldSpotsText) availabilityP.textContent = oldSpotsText;
+                messageDiv.textContent = result.detail || "Failed to remove participant";
+                messageDiv.className = "error";
+                messageDiv.classList.remove("hidden");
+              }
+
+              setTimeout(() => {
+                messageDiv.classList.add("hidden");
+              }, 4000);
+            } catch (err) {
+              // Rollback UI on network error
+              console.error("Error removing participant:", err);
+              if (liBackup && participantsList) participantsList.appendChild(liBackup);
+              if (availabilityP && oldSpotsText) availabilityP.textContent = oldSpotsText;
+              messageDiv.textContent = "Failed to remove participant. Try again.";
+              messageDiv.className = "error";
+              messageDiv.classList.remove("hidden");
+            }
+          });
+        });
 
         // Add option to select dropdown
         const option = document.createElement("option");
